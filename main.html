@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D地球儀マップ - Mapbox</title>
+    <!-- Mapbox GL JS の読み込み -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+            height: 100%;
+        }
+
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+            backdrop-filter: blur(10px);
+            max-width: 300px;
+        }
+
+        .info-panel h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .info-panel p {
+            margin: 5px 0;
+            font-size: 12px;
+            color: #666;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 18px;
+            z-index: 1001;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    
+    <div class="loading" id="loading">地球儀を読み込み中...</div>
+    
+    <div class="info-panel">
+        <h3>地球儀情報</h3>
+        <p><strong>現在位置:</strong> <span id="currentPos">読み込み中...</span></p>
+        <p><strong>ズームレベル:</strong> <span id="currentZoom">-</span></p>
+        <p><strong>ピッチ:</strong> <span id="currentPitch">-</span></p>
+        <p><strong>方位:</strong> <span id="currentBearing">-</span></p>
+        <p><strong>回転状態:</strong> <span id="rotationStatus">停止中</span></p>
+    </div>
+
+    <script>
+        // Mapboxアクセストークンを設定
+        mapboxgl.accessToken = 'pk.eyJ1IjoiZ2dwbGF5ZXIiLCJhIjoiY200OXBzcmI1MGR6bzJxcTFrdDJ1MGJyNSJ9.o_VpEScSsAPdt8U8PDB58Q';
+
+        let map;
+        let isRotating = false;
+        let rotationInterval;
+
+        // マップの初期化
+        map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/light-v11',
+            center: [139.6503, 35.6762], // 東京
+            zoom: 2,
+            pitch: 45,
+            bearing: 0,
+            projection: 'globe'
+        });
+
+        map.addControl(new mapboxgl.NavigationControl());
+
+        map.on('load', function() {
+            document.getElementById('loading').style.display = 'none';
+            map.setFog({});
+            updateInfoPanel();
+
+            // 2024年国境GeoJSONを読み込んで赤色の国境線を描画
+            fetch('2024.geojson')
+                .then(response => response.json())
+                .then(geojson => {
+                    // GeoJSONソース追加
+                    if (map.getSource('borders2024')) map.removeSource('borders2024');
+                    map.addSource('borders2024', {
+                        type: 'geojson',
+                        data: geojson
+                    });
+                    // 国境線レイヤー追加（赤色）
+                    if (!map.getLayer('borders2024-line')) {
+                        map.addLayer({
+                            id: 'borders2024-line',
+                            type: 'line',
+                            source: 'borders2024',
+                            paint: {
+                                'line-color': '#ff0000',
+                                'line-width': 2
+                            },
+                            filter: ['all', ['==', '$type', 'LineString']]
+                        });
+                    }
+                    // ポリゴンの境界線も赤色で描画
+                    if (!map.getLayer('borders2024-polygon-outline')) {
+                        map.addLayer({
+                            id: 'borders2024-polygon-outline',
+                            type: 'line',
+                            source: 'borders2024',
+                            paint: {
+                                'line-color': '#ff0000',
+                                'line-width': 2
+                            },
+                            filter: ['all', ['==', '$type', 'Polygon']]
+                        });
+                    }
+                });
+
+            // 米軍基地ピン（map (1).geojson）を表示
+            map.on('styleimagemissing', function(e) {
+                if (e.id === 'marker-15') {
+                    if (map.hasImage && map.hasImage('marker-15')) return; // 既に追加済みなら何もしない
+                    const svg = `<svg width="30" height="40" viewBox="0 0 30 40" fill="none" xmlns="http://www.w3.org/2000/svg"><ellipse cx="15" cy="13" rx="10" ry="10" fill="#e74c3c"/><path d="M15 40C15 40 27 24.5 27 15C27 6.71573 21.2843 1 15 1C8.71573 1 3 6.71573 3 15C3 24.5 15 40 15 40Z" fill="#e74c3c" stroke="#fff" stroke-width="2"/></svg>`;
+                    const img = new Image(30, 40);
+                    img.onload = function() {
+                        if (!(map.hasImage && map.hasImage('marker-15'))) {
+                            map.addImage('marker-15', img, { pixelRatio: 2 });
+                        }
+                    };
+                    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+                }
+            });
+            fetch('map (1).geojson')
+                .then(response => response.json())
+                .then(geojson => {
+                    if (map.getSource('us-bases')) map.removeSource('us-bases');
+                    map.addSource('us-bases', {
+                        type: 'geojson',
+                        data: geojson
+                    });
+                    // ピン（シンボル）レイヤー追加
+                    if (!map.getLayer('us-bases-symbol')) {
+                        map.addLayer({
+                            id: 'us-bases-symbol',
+                            type: 'symbol',
+                            source: 'us-bases',
+                            layout: {
+                                'icon-image': 'marker-15',
+                                'icon-size': 1.5,
+                                'icon-allow-overlap': true,
+                                'text-field': ['get', 'name'],
+                                'text-font': ['Open Sans Bold', 'Arial Unicode MS Bold'],
+                                'text-size': 12,
+                                'text-offset': [0, 1.5],
+                                'text-anchor': 'top',
+                                'text-optional': true
+                            },
+                            paint: {
+                                'text-color': '#222',
+                                'text-halo-color': '#fff',
+                                'text-halo-width': 2
+                            }
+                        });
+                    }
+                });
+        });
+
+        map.on('move', function() {
+            updateInfoPanel();
+        });
+
+        function updateInfoPanel() {
+            const center = map.getCenter();
+            document.getElementById('currentPos').textContent =
+                `${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`;
+            document.getElementById('currentZoom').textContent =
+                map.getZoom().toFixed(1);
+            document.getElementById('currentPitch').textContent =
+                map.getPitch().toFixed(1) + '°';
+            document.getElementById('currentBearing').textContent =
+                map.getBearing().toFixed(1) + '°';
+        }
+
+        function flyToTokyo() {
+            map.flyTo({
+                center: [139.6503, 35.6762],
+                zoom: 10,
+                pitch: 45,
+                bearing: 0,
+                duration: 3000
+            });
+        }
+
+        function flyToNewYork() {
+            map.flyTo({
+                center: [-74.006, 40.7128],
+                zoom: 10,
+                pitch: 45,
+                bearing: 0,
+                duration: 3000
+            });
+        }
+
+        function flyToLondon() {
+            map.flyTo({
+                center: [-0.1276, 51.5074],
+                zoom: 10,
+                pitch: 45,
+                bearing: 0,
+                duration: 3000
+            });
+        }
+
+        function resetView() {
+            map.flyTo({
+                center: [139.6503, 35.6762],
+                zoom: 2,
+                pitch: 45,
+                bearing: 0,
+                duration: 2000
+            });
+        }
+
+        function toggleRotation() {
+            if (isRotating) {
+                clearInterval(rotationInterval);
+                isRotating = false;
+                document.getElementById('rotationStatus').textContent = '停止中';
+            } else {
+                isRotating = true;
+                document.getElementById('rotationStatus').textContent = '回転中';
+                rotationInterval = setInterval(function() {
+                    const currentBearing = map.getBearing();
+                    map.easeTo({
+                        bearing: currentBearing + 1,
+                        duration: 100
+                    });
+                }, 100);
+            }
+        }
+
+        document.addEventListener('keydown', function(e) {
+            switch(e.key) {
+                case 'ArrowUp':
+                    e.preventDefault();
+                    const center = map.getCenter();
+                    map.flyTo({
+                        center: [center.lng, center.lat + 10],
+                        duration: 1000
+                    });
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    const center2 = map.getCenter();
+                    map.flyTo({
+                        center: [center2.lng, center2.lat - 10],
+                        duration: 1000
+                    });
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    const center3 = map.getCenter();
+                    map.flyTo({
+                        center: [center3.lng - 10, center3.lat],
+                        duration: 1000
+                    });
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    const center4 = map.getCenter();
+                    map.flyTo({
+                        center: [center4.lng + 10, center4.lat],
+                        duration: 1000
+                    });
+                    break;
+                case ' ':
+                    e.preventDefault();
+                    toggleRotation();
+                    break;
+            }
+        });
+    </script>
+</body>
+</html>
