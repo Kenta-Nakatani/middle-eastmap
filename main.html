@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D地球儀マップ - Mapbox</title>
+    <title>中東マップ- Mapbox</title>
     <!-- Mapbox GL JS の読み込み -->
     <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
     <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet" />
@@ -14,40 +14,17 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
             height: 100vh;
-            overflow: hidden;
+            /* overflow: hidden; ← 削除済みでOK */
         }
 
         #map {
-            position: absolute;
+            position: fixed;
             top: 0;
-            bottom: 0;
-            width: 100%;
-            height: 100%;
-        }
-
-        .info-panel {
-            position: absolute;
-            top: 20px;
-            right: 20px;
-            z-index: 1000;
-            background: rgba(255, 255, 255, 0.9);
-            padding: 15px;
-            border-radius: 10px;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-            backdrop-filter: blur(10px);
-            max-width: 300px;
-        }
-
-        .info-panel h3 {
-            margin: 0 0 10px 0;
-            color: #333;
-            font-size: 16px;
-        }
-
-        .info-panel p {
-            margin: 5px 0;
-            font-size: 12px;
-            color: #666;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            transform: none;
+            /* 全画面表示 */
         }
 
         .loading {
@@ -66,15 +43,6 @@
     
     <div class="loading" id="loading">地球儀を読み込み中...</div>
     
-    <div class="info-panel">
-        <h3>地球儀情報</h3>
-        <p><strong>現在位置:</strong> <span id="currentPos">読み込み中...</span></p>
-        <p><strong>ズームレベル:</strong> <span id="currentZoom">-</span></p>
-        <p><strong>ピッチ:</strong> <span id="currentPitch">-</span></p>
-        <p><strong>方位:</strong> <span id="currentBearing">-</span></p>
-        <p><strong>回転状態:</strong> <span id="rotationStatus">停止中</span></p>
-    </div>
-
     <script>
         // Mapboxアクセストークンを設定
         mapboxgl.accessToken = 'pk.eyJ1IjoiZ2dwbGF5ZXIiLCJhIjoiY200OXBzcmI1MGR6bzJxcTFrdDJ1MGJyNSJ9.o_VpEScSsAPdt8U8PDB58Q';
@@ -99,7 +67,6 @@
         map.on('load', function() {
             document.getElementById('loading').style.display = 'none';
             map.setFog({});
-            updateInfoPanel();
 
             // 2024年国境GeoJSONを読み込んで赤色の国境線を描画
             fetch('2024.geojson')
@@ -186,23 +153,81 @@
                         });
                     }
                 });
-        });
 
-        map.on('move', function() {
-            updateInfoPanel();
-        });
+            // 民族分布レイヤー追加
+            const ethnicGroups = [
+                { id: 'farsis',    file: 'farsis.geojson',    color: '#ffe066', emoji: '🌕' }, // 黄
+                { id: 'azeris',    file: 'azeris.geojson',    color: '#3498db', emoji: '🔵' }, // 青
+                { id: 'kurds',     file: 'kurds.geojson',     color: '#27ae60', emoji: '🟢' }, // 緑
+                { id: 'baluch',    file: 'baluch.geojson',    color: '#e74c3c', emoji: '🔴' }, // 赤
+                { id: 'turkmens',  file: 'turkmens.geojson',  color: '#8e44ad', emoji: '🟣' }, // 紫
+                { id: 'lurs',      file: 'lurs.geojson',      color: '#ff9900', emoji: '🟠' }, // 橙
+                { id: 'gilak',     file: 'gilak.geojson',     color: '#00cfff', emoji: '🌊' }  // 水色
+            ];
 
-        function updateInfoPanel() {
-            const center = map.getCenter();
-            document.getElementById('currentPos').textContent =
-                `${center.lat.toFixed(4)}, ${center.lng.toFixed(4)}`;
-            document.getElementById('currentZoom').textContent =
-                map.getZoom().toFixed(1);
-            document.getElementById('currentPitch').textContent =
-                map.getPitch().toFixed(1) + '°';
-            document.getElementById('currentBearing').textContent =
-                map.getBearing().toFixed(1) + '°';
-        }
+            ethnicGroups.forEach(group => {
+                fetch(group.file)
+                    .then(res => res.json())
+                    .then(geojson => {
+                        if (map.getSource(group.id)) map.removeSource(group.id);
+                        map.addSource(group.id, {
+                            type: 'geojson',
+                            data: geojson
+                        });
+                        // 塗りつぶしレイヤー
+                        if (!map.getLayer(group.id + '-fill')) {
+                            map.addLayer({
+                                id: group.id + '-fill',
+                                type: 'fill',
+                                source: group.id,
+                                paint: {
+                                    'fill-color': group.color,
+                                    'fill-opacity': 0.4
+                                }
+                            });
+                        }
+                        // 境界線レイヤー（薄い色で輪郭を強調したい場合）
+                        if (!map.getLayer(group.id + '-outline')) {
+                            map.addLayer({
+                                id: group.id + '-outline',
+                                type: 'line',
+                                source: group.id,
+                                paint: {
+                                    'line-color': group.color,
+                                    'line-width': 2,
+                                    'line-opacity': 0.7
+                                }
+                            });
+                        }
+                    });
+            });
+
+            // 油田ポイント表示
+            fetch('oil.geojson')
+                .then(response => response.json())
+                .then(geojson => {
+                    if (map.getSource('oilfields')) map.removeSource('oilfields');
+                    map.addSource('oilfields', {
+                        type: 'geojson',
+                        data: geojson
+                    });
+                    // 油田を黄色い円で表示
+                    if (!map.getLayer('oilfields-circle')) {
+                        map.addLayer({
+                            id: 'oilfields-circle',
+                            type: 'circle',
+                            source: 'oilfields',
+                            paint: {
+                                'circle-radius': 5,
+                                'circle-color': '#ffe066',
+                                'circle-stroke-color': '#bfa600',
+                                'circle-stroke-width': 2,
+                                'circle-opacity': 0.8
+                            }
+                        });
+                    }
+                });
+        });
 
         function flyToTokyo() {
             map.flyTo({
@@ -248,10 +273,8 @@
             if (isRotating) {
                 clearInterval(rotationInterval);
                 isRotating = false;
-                document.getElementById('rotationStatus').textContent = '停止中';
             } else {
                 isRotating = true;
-                document.getElementById('rotationStatus').textContent = '回転中';
                 rotationInterval = setInterval(function() {
                     const currentBearing = map.getBearing();
                     map.easeTo({
